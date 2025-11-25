@@ -18,11 +18,17 @@ namespace MFlight.Demo
         public float forceMult = 1000f;
         public float drag = 0.01f;
 
+        [Header("Pseudo Gravity (前後だけ)")]
+        [Tooltip("機首上下による疑似的な加減速の強さ")]
+        public float pseudoGravityStrength = 50f;
+
         [Header("Debug")]
         [Range(-1f, 1f)] public float pitch;
         [Range(-1f, 1f)] public float yaw;
         [Range(-1f, 1f)] public float roll;
-        [Range(-1f, 1f)] public float throttle;
+        [Range(0f, 1f)] public float throttle;
+
+        [SerializeField] float speed;
 
         private Rigidbody rb;
 
@@ -49,18 +55,31 @@ namespace MFlight.Demo
 
         private void Update()
         {
+            // 入力読み取り
             pitch = Mathf.Clamp(pitchAction.action.ReadValue<Vector2>().y, -1f, 1f);
             yaw = Mathf.Clamp(yawAction.action.ReadValue<Vector2>().x, -1f, 1f);
             roll = Mathf.Clamp(rollAction.action.ReadValue<Vector2>().x, -1f, 1f);
 
-            float t = throttleAction.action.ReadValue<Vector2>().y;
-            throttle = Mathf.Clamp(throttle + t * Time.deltaTime, 0f, 1f);
+            // スロットル：スティックの上下で 0〜1 を増減
+            float tInput = throttleAction.action.ReadValue<Vector2>().y;
+            throttle = Mathf.Clamp(throttle + tInput * Time.deltaTime, 0f, 1f);
         }
 
         private void FixedUpdate()
         {
-            rb.AddRelativeForce(Vector3.forward * thrust * throttle * forceMult);
+            // ① エンジン推力（スロットル）
+            rb.AddRelativeForce(Vector3.forward * thrust * throttle * forceMult, ForceMode.Force);
 
+            // ② 機首上下による疑似重力の前後加速
+            // forward.y < 0 … 機首下げ → -forward.y は正 → 前に押す
+            // forward.y > 0 … 機首上げ → -forward.y は負 → 後ろに押す（減速）
+            float pitchFactor = -transform.forward.y; // -1 〜 1
+            rb.AddRelativeForce(
+                Vector3.forward * pitchFactor * pseudoGravityStrength * forceMult,
+                ForceMode.Force
+            );
+
+            // ③ 回転トルク
             rb.AddRelativeTorque(
                 new Vector3(
                     turnTorque.x * pitch,
@@ -70,7 +89,10 @@ namespace MFlight.Demo
                 ForceMode.Force
             );
 
+            // ④ 空気抵抗（速度に比例した減速）
             rb.AddForce(-rb.linearVelocity * drag, ForceMode.Force);
+
+            speed = rb.linearVelocity.magnitude;
         }
     }
 }
