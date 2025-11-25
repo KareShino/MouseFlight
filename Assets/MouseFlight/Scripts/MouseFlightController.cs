@@ -14,30 +14,44 @@ namespace MFlight
     public class MouseFlightController : MonoBehaviour
     {
         [Header("Components")]
-        [SerializeField] [Tooltip("Transform of the aircraft the rig follows and references")]
+        [SerializeField]
+        [Tooltip("Transform of the aircraft the rig follows and references")]
         private Transform aircraft = null;
-        [SerializeField] [Tooltip("Transform of the object the mouse rotates to generate MouseAim position")]
+        [SerializeField]
+        [Tooltip("Transform of the object the mouse rotates to generate MouseAim position")]
         private Transform mouseAim = null;
-        [SerializeField] [Tooltip("Transform of the object on the rig which the camera is attached to")]
+        [SerializeField]
+        [Tooltip("Transform of the object on the rig which the camera is attached to")]
         private Transform cameraRig = null;
-        [SerializeField] [Tooltip("Transform of the camera itself")]
+        [SerializeField]
+        [Tooltip("Transform of the camera itself")]
         private Transform cam = null;
 
+        [Header("Follow Tuning")]
+        [Tooltip("0 = マウス方向優先, 1 = 機体進行方向優先")]
+        [Range(0f, 1f)]
+        public float followPlaneFactor = 0.4f;
+
         [Header("Options")]
-        [SerializeField] [Tooltip("Follow aircraft using fixed update loop")]
+        [SerializeField]
+        [Tooltip("Follow aircraft using fixed update loop")]
         private bool useFixed = true;
 
-        [SerializeField] [Tooltip("How quickly the camera tracks the mouse aim point.")]
+        [SerializeField]
+        [Tooltip("How quickly the camera tracks the mouse aim point.")]
         private float camSmoothSpeed = 5f;
 
-        [SerializeField] [Tooltip("Mouse sensitivity for the mouse flight target")]
+        [SerializeField]
+        [Tooltip("Mouse sensitivity for the mouse flight target")]
         private float mouseSensitivity = 3f;
 
-        [SerializeField] [Tooltip("How far the boresight and mouse flight are from the aircraft")]
+        [SerializeField]
+        [Tooltip("How far the boresight and mouse flight are from the aircraft")]
         private float aimDistance = 500f;
 
         [Space]
-        [SerializeField] [Tooltip("How far the boresight and mouse flight are from the aircraft")]
+        [SerializeField]
+        [Tooltip("How far the boresight and mouse flight are from the aircraft")]
         private bool showDebugInfo = false;
 
         private Vector3 frozenDirection = Vector3.forward;
@@ -121,7 +135,7 @@ namespace MFlight
                 isMouseAimFrozen = true;
                 frozenDirection = mouseAim.forward;
             }
-            else if  (Input.GetKeyUp(KeyCode.C))
+            else if (Input.GetKeyUp(KeyCode.C))
             {
                 isMouseAimFrozen = false;
                 mouseAim.forward = frozenDirection;
@@ -131,22 +145,47 @@ namespace MFlight
             float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity;
             float mouseY = -Input.GetAxis("Mouse Y") * mouseSensitivity;
 
-            // Rotate the aim target that the plane is meant to fly towards.
-            // Use the camera's axes in world space so that mouse motion is intuitive.
+            // マウスの動きで mouseAim を回す（ここは元のまま）
             mouseAim.Rotate(cam.right, mouseY, Space.World);
             mouseAim.Rotate(cam.up, mouseX, Space.World);
 
-            // The up vector of the camera normally is aligned to the horizon. However, when
-            // looking straight up/down this can feel a bit weird. At those extremes, the camera
-            // stops aligning to the horizon and instead aligns to itself.
-            Vector3 upVec = (Mathf.Abs(mouseAim.forward.y) > 0.9f) ? cameraRig.up : Vector3.up;
+            // ===== ここからカメラ向き決定ロジックを整理 =====
 
-            // Smoothly rotate the camera to face the mouse aim.
-            cameraRig.rotation = Damp(cameraRig.rotation,
-                                      Quaternion.LookRotation(mouseAim.forward, upVec),
-                                      camSmoothSpeed,
-                                      Time.deltaTime);
+            // 1) 見る方向 forward を決める（マウスと機体のブレンド）
+            Vector3 forward = mouseAim.forward;
+            if (aircraft != null)
+            {
+                // followPlaneFactor: 0=マウスのみ, 1=機体のみ
+                forward = Vector3.Slerp(mouseAim.forward, aircraft.forward, followPlaneFactor);
+            }
+            forward.Normalize();
+
+            // 2) "上" ベクトル upVec を、さっき決めた forward ベースで決める
+            //    -> 基本はワールド上方向 (= 地平線を保つ)
+            //    -> forward が真上/真下に近いときだけ、今のカメラの up を維持
+            Vector3 upVec;
+            if (Mathf.Abs(forward.y) > 0.9f)
+            {
+                // 真上・真下近くを向くときは、カメラの roll を維持して急なひっくり返りを防ぐ
+                upVec = cameraRig.up;
+            }
+            else
+            {
+                // それ以外は基本ワールド上方向で安定させる（ロールが勝手に回転しない）
+                upVec = Vector3.up;
+            }
+
+            // 3) forward & upVec からターゲット回転を作り、Damp でなめらかに追従
+            Quaternion targetRot = Quaternion.LookRotation(forward, upVec);
+
+            cameraRig.rotation = Damp(
+                cameraRig.rotation,
+                targetRot,
+                camSmoothSpeed,
+                Time.deltaTime
+            );
         }
+
 
         private Vector3 GetFrozenMouseAimPos()
         {
