@@ -27,6 +27,9 @@ namespace MFlight.Demo
 
             if (playerCam == null)
                 Debug.LogError(name + ": Hud - No camera found on assigned Mouse Flight Controller!");
+
+            Cursor.visible = false;
+            Cursor.lockState = CursorLockMode.Locked;
         }
 
         private void Update()
