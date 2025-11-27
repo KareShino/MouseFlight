@@ -1,16 +1,13 @@
 ﻿using UnityEngine;
-using UnityEngine.InputSystem;
 
 namespace MFlight.Demo
 {
     [RequireComponent(typeof(Rigidbody))]
     public class Plane : MonoBehaviour
     {
-        [Header("Input Actions")]
-        public InputActionReference pitchAction;
-        public InputActionReference yawAction;
-        public InputActionReference rollAction;
-        public InputActionReference throttleAction;
+        [Header("Pilot")]
+        [SerializeField]
+        private PlanePilot _pilot;   // インスペクタで PlayerPilot / AIPilot を渡す
 
         [Header("Physics")]
         public float thrust = 100f;
@@ -23,97 +20,69 @@ namespace MFlight.Demo
         [Tooltip("機首上下による疑似的な加減速の強さ")]
         public float pseudoGravityStrength = 50f;
 
-        [Header("Throttle")]
-        [Range(0f, 1f)]
-        public float minThrottle = 0.2f;   // ★ 最低スロットル
-
-        [Header("Debug")]
+        [Header("Debug (Read Only)")]
         [Range(-1f, 1f)] public float pitch;
         [Range(-1f, 1f)] public float yaw;
         [Range(-1f, 1f)] public float roll;
         [Range(0f, 1f)] public float throttle;
 
-        [SerializeField] float speed;
-
-        private Rigidbody rb;
+        private Rigidbody _rb;
 
         private void Awake()
         {
-            rb = GetComponent<Rigidbody>();
-            throttle = minThrottle; // ★ 初期値
-        }
+            _rb = GetComponent<Rigidbody>();
 
+            // 保険：未設定なら同じ GameObject から探す
+            if (_pilot == null)
+            {
+                _pilot = GetComponent<PlanePilot>();
+            }
 
-        private void OnEnable()
-        {
-            pitchAction.action.Enable();
-            yawAction.action.Enable();
-            rollAction.action.Enable();
-            throttleAction.action.Enable();
-        }
-
-        private void OnDisable()
-        {
-            pitchAction.action.Disable();
-            yawAction.action.Disable();
-            rollAction.action.Disable();
-            throttleAction.action.Disable();
+            if (_pilot == null)
+            {
+                Debug.LogWarning($"{name}: PlanePilot がアサインされていません。入力はゼロのままです。");
+            }
         }
 
         private void Update()
         {
-            // 入力読み取り
-            pitch = Mathf.Clamp(pitchAction.action.ReadValue<Vector2>().y, -1f, 1f);
-            yaw = Mathf.Clamp(yawAction.action.ReadValue<Vector2>().x, -1f, 1f);
-            roll = Mathf.Clamp(rollAction.action.ReadValue<Vector2>().x, -1f, 1f);
-
-            // スロットル入力（-1 ～ 1）
-            float tInput = throttleAction.action.ReadValue<float>();
-
-            // ★ここで minThrottle ～ 1 に徐々に近づける
-            throttle = Mathf.Clamp(
-                throttle + tInput * throttleSpeed * Time.deltaTime,
-                minThrottle,
-                1f
-            );
-
+            // パイロットから入力をもらう
+            if (_pilot != null)
+            {
+                _pilot.GetInputs(out pitch, out yaw, out roll, out throttle);
+            }
+            else
+            {
+                pitch = yaw = roll = 0f;
+                // throttle はそのままでもいいし、徐々に0に寄せても良い
+            }
         }
-
 
         private void FixedUpdate()
         {
-            // ① エンジン推力（スロットル）
-            rb.AddRelativeForce(Vector3.forward * thrust * throttle * forceMult, ForceMode.Force);
+            // ★ここは「今まで使っていた Plane の物理処理」を
+            //    pitch / yaw / roll / throttle を使ってそのまま移植するだけでOK
 
-            // ② 機首上下による疑似重力の前後加速
-            // forward.y < 0 … 機首下げ → -forward.y は正 → 前に押す
-            // forward.y > 0 … 機首上げ → -forward.y は負 → 後ろに押す（減速）
-            float pitchFactor = -transform.forward.y; // -1 〜 1
-            rb.AddRelativeForce(
-                Vector3.forward * pitchFactor * pseudoGravityStrength * forceMult,
-                ForceMode.Force
+            // 例）めちゃざっくりサンプル：
+            // ドラッグ
+            _rb.linearVelocity -= _rb.linearVelocity * drag * Time.fixedDeltaTime;
+
+            // 推力
+            Vector3 thrustForce = transform.forward * (throttle * thrust * forceMult);
+            _rb.AddForce(thrustForce, ForceMode.Force);
+
+            // 疑似重力（ピッチに応じて前後方向の加減速を入れる例）
+            float pseudoAccel = pitch * pseudoGravityStrength;
+            _rb.AddForce(transform.forward * pseudoAccel, ForceMode.Force);
+
+            // 回転トルク
+            Vector3 torqueInput = new Vector3(
+                turnTorque.x * pitch,
+                turnTorque.y * yaw,
+                turnTorque.z * roll
             );
 
-            // ③ 回転トルク（入力）
-            rb.AddRelativeTorque(
-                new Vector3(
-                    turnTorque.x * pitch,
-                    turnTorque.y * yaw,
-                    -turnTorque.z * roll
-                ) * forceMult,
-                ForceMode.Force
-            );
-
-            // ③.5 バンクターン（ロール角による自然な曲がり）
-            float bank = transform.right.y;
-            float bankTurnStrength = 0.6f;
-            rb.AddRelativeTorque(Vector3.up * -bank * turnTorque.y * bankTurnStrength * forceMult, ForceMode.Force);
-
-
-            // ④ 空気抵抗（速度に比例した減速）
-            rb.AddForce(-rb.linearVelocity * drag, ForceMode.Force);
-
-            speed = rb.linearVelocity.magnitude;
+            _rb.AddRelativeTorque(torqueInput * forceMult * Time.fixedDeltaTime, ForceMode.Force);
         }
     }
 }
