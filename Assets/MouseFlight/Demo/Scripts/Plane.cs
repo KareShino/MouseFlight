@@ -23,6 +23,10 @@ namespace MFlight.Demo
         [Tooltip("機首上下による疑似的な加減速の強さ")]
         public float pseudoGravityStrength = 50f;
 
+        [Header("Throttle")]
+        [Range(0f, 1f)]
+        public float minThrottle = 0.2f;   // ★ 最低スロットル
+
         [Header("Debug")]
         [Range(-1f, 1f)] public float pitch;
         [Range(-1f, 1f)] public float yaw;
@@ -36,7 +40,9 @@ namespace MFlight.Demo
         private void Awake()
         {
             rb = GetComponent<Rigidbody>();
+            throttle = minThrottle; // ★ 初期値
         }
+
 
         private void OnEnable()
         {
@@ -63,11 +69,16 @@ namespace MFlight.Demo
 
             // スロットル入力（-1 ～ 1）
             float tInput = throttleAction.action.ReadValue<float>();
-            Debug.Log("Throttle Input: " + tInput);
 
-            // ★ここで 0～1 に徐々に近づける
-            throttle = Mathf.Clamp01(throttle + tInput * throttleSpeed * Time.deltaTime);
+            // ★ここで minThrottle ～ 1 に徐々に近づける
+            throttle = Mathf.Clamp(
+                throttle + tInput * throttleSpeed * Time.deltaTime,
+                minThrottle,
+                1f
+            );
+
         }
+
 
         private void FixedUpdate()
         {
