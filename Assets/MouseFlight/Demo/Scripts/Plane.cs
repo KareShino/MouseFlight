@@ -17,6 +17,7 @@ namespace MFlight.Demo
         public Vector3 turnTorque = new Vector3(90f, 25f, 45f);
         public float forceMult = 1000f;
         public float drag = 0.01f;
+        public float throttleSpeed = 0.5f; // スロットルの上がり下がり速度
 
         [Header("Pseudo Gravity (前後だけ)")]
         [Tooltip("機首上下による疑似的な加減速の強さ")]
@@ -60,9 +61,12 @@ namespace MFlight.Demo
             yaw = Mathf.Clamp(yawAction.action.ReadValue<Vector2>().x, -1f, 1f);
             roll = Mathf.Clamp(rollAction.action.ReadValue<Vector2>().x, -1f, 1f);
 
-            // スロットル：スティックの上下で 0〜1 を増減
-            float tInput = throttleAction.action.ReadValue<Vector2>().y;
-            throttle = Mathf.Clamp(throttle + tInput * Time.deltaTime, 0f, 1f);
+            // スロットル入力（-1 ～ 1）
+            float tInput = throttleAction.action.ReadValue<float>();
+            Debug.Log("Throttle Input: " + tInput);
+
+            // ★ここで 0～1 に徐々に近づける
+            throttle = Mathf.Clamp01(throttle + tInput * throttleSpeed * Time.deltaTime);
         }
 
         private void FixedUpdate()
@@ -79,7 +83,7 @@ namespace MFlight.Demo
                 ForceMode.Force
             );
 
-            // ③ 回転トルク
+            // ③ 回転トルク（入力）
             rb.AddRelativeTorque(
                 new Vector3(
                     turnTorque.x * pitch,
@@ -88,6 +92,12 @@ namespace MFlight.Demo
                 ) * forceMult,
                 ForceMode.Force
             );
+
+            // ③.5 バンクターン（ロール角による自然な曲がり）
+            float bank = transform.right.y;
+            float bankTurnStrength = 0.6f;
+            rb.AddRelativeTorque(Vector3.up * -bank * turnTorque.y * bankTurnStrength * forceMult, ForceMode.Force);
+
 
             // ④ 空気抵抗（速度に比例した減速）
             rb.AddForce(-rb.linearVelocity * drag, ForceMode.Force);
