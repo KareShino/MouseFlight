@@ -1051,6 +1051,11 @@ PrefabInstance:
         type: 3}
     - target: {fileID: 114329657595640044, guid: 76845026de374da4aa455cd164e63143,
         type: 3}
+      propertyPath: throttleSpeed
+      value: 0.2
+      objectReference: {fileID: 0}
+    - target: {fileID: 114329657595640044, guid: 76845026de374da4aa455cd164e63143,
+        type: 3}
       propertyPath: throttleAction
       value: 
       objectReference: {fileID: 2154674618695082745, guid: 03659bec264b17e4581a44e77af23294,
