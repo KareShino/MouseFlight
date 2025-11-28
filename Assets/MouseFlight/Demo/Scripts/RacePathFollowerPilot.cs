@@ -6,6 +6,7 @@ namespace MFlight.Demo
     /// <summary>
     /// RacePath のウェイポイント列に沿って飛行機をなぞらせる AI パイロット。
     /// - 最近傍ウェイポイントから lookAheadDistance 先を「目標」とする
+    /// - さらに「直近のウェイポイント」と「その次のウェイポイント」の中間も意識して補正
     /// - 曲がりは基本バンクターン（ロールで横倒し → ピッチで曲がる）
     /// </summary>
     [RequireComponent(typeof(Plane))]
@@ -24,6 +25,14 @@ namespace MFlight.Demo
 
         [Tooltip("前フレームのインデックスから前に何個までを見るか")]
         [Min(1)] public int searchForwardCount = 30;
+
+        [Header("Multi-point Targeting")]
+        [Tooltip("直近とその次のウェイポイントも意識してターゲットを補正するか")]
+        public bool useNearAndNextWaypoints = true;
+
+        [Tooltip("直近〜次のウェイポイント（セグメント）の影響の強さ (0=無視, 1=ほぼそこを向く)")]
+        [Range(0f, 1f)]
+        public float nearSegmentWeight = 0.6f;
 
         [Header("Steering (pitch / yaw)")]
         [Tooltip("ピッチ誤差（rad）→ 入力への倍率")]
@@ -146,16 +155,45 @@ namespace MFlight.Demo
             _lastClosestIndex = closestIndex;
 
             // ─────────────────────
-            // lookAheadDistance 分だけ先のターゲットを決める
+            // lookAheadDistance 分だけ先のターゲットインデックス
             // ─────────────────────
             int targetIndex = GetTargetIndexByDistance(closestIndex, wps);
-            Vector3 targetPos = wps[targetIndex].position;
+
+            // ─────────────────────
+            // 「直近 & その次」のセグメントと、「先のターゲット」をブレンドして最終ターゲットを決める
+            // ─────────────────────
+            Vector3 finalTargetPos = wps[targetIndex].position;
+
+            if (useNearAndNextWaypoints)
+            {
+                int count = wps.Count;
+
+                // 直近の次のウェイポイント（前方）
+                int nextIndex;
+                if (path.loop)
+                    nextIndex = (closestIndex + 1) % count;
+                else
+                    nextIndex = Mathf.Min(closestIndex + 1, count - 1);
+
+                Vector3 p0 = wps[closestIndex].position;
+                Vector3 p1 = wps[nextIndex].position;
+
+                // セグメント上の中間点（「直近とその次の間」を狙う）
+                Vector3 segmentMid = Vector3.Lerp(p0, p1, 0.5f);
+
+                // 「先の方（lookAhead）」と「直近セグメント」のブレンド
+                // nearSegmentWeight が 1 に近いほど「直近〜次」に強く吸い寄せられる
+                finalTargetPos = Vector3.Lerp(
+                    finalTargetPos,   // 遠いターゲット
+                    segmentMid,       // 直近セグメント
+                    nearSegmentWeight
+                );
+            }
 
             // ─────────────────────
             // 進行方向制御（ピッチ／ヨー／ロール）
             // ─────────────────────
-
-            Vector3 toTargetWorld = (targetPos - planePos).normalized;
+            Vector3 toTargetWorld = (finalTargetPos - planePos).normalized;
             Vector3 toTargetLocal = plane.transform.InverseTransformDirection(toTargetWorld);
 
             // ローカル空間での方向誤差（ラジアン）
@@ -217,6 +255,7 @@ namespace MFlight.Demo
             _pitch = Mathf.Clamp(basePitch * pitchMul, -maxInput, maxInput);
 
             // ========== 3. Yaw はあくまで補助（使いたければ small 値） ==========
+
             _yaw = Mathf.Clamp(
                 yawSign * yawError * yawInputGain,
                 -maxInput,
@@ -332,30 +371,47 @@ namespace MFlight.Demo
             if (count == 0) return 0;
 
             float currentDist = wps[closestIndex].distance;
-            float targetDist = currentDist + Mathf.Max(0f, lookAheadDistance);
+            float ahead = Mathf.Max(0f, lookAheadDistance);
+
+            float totalLength = wps[count - 1].distance;
+            if (totalLength <= 0.01f) return closestIndex;
 
             if (path.loop)
             {
-                float totalLength = wps[count - 1].distance;
-                if (totalLength <= 0.01f) return closestIndex;
+                float targetDist = currentDist + ahead;
 
-                // ループなので距離を一周で丸める
-                targetDist = Mathf.Repeat(targetDist, totalLength);
-
-                int idx = closestIndex;
-                for (int n = 0; n < count; n++)
+                // 1周以内で収まる場合：普通に「今のインデックスから前方」を探す
+                if (targetDist <= totalLength)
                 {
-                    idx = (closestIndex + n) % count;
-                    if (wps[idx].distance >= targetDist)
-                        return idx;
-                }
+                    for (int i = closestIndex; i < count; i++)
+                    {
+                        if (wps[i].distance >= targetDist)
+                            return i;
+                    }
 
-                return closestIndex;
+                    // 念のため
+                    return count - 1;
+                }
+                else
+                {
+                    // 1周を超えた分だけ先 → スタート付近にターゲットが来る
+                    float wrappedTarget = targetDist - totalLength;
+
+                    // スタート（0）から探す
+                    for (int i = 0; i < count; i++)
+                    {
+                        if (wps[i].distance >= wrappedTarget)
+                            return i;
+                    }
+
+                    // 念のため
+                    return 0;
+                }
             }
             else
             {
-                float totalLength = wps[count - 1].distance;
-                targetDist = Mathf.Min(targetDist, totalLength);
+                // 非ループは今のままでもほぼOK（端でクランプするだけ）
+                float targetDist = Mathf.Min(currentDist + ahead, totalLength);
 
                 for (int i = closestIndex; i < count; i++)
                 {
@@ -366,5 +422,6 @@ namespace MFlight.Demo
                 return count - 1;
             }
         }
+
     }
 }
