@@ -4,9 +4,11 @@ using System.Collections.Generic;
 namespace MFlight.Demo
 {
     /// <summary>
-    /// RacePath のウェイポイント列に沿って飛行機をなぞらせる AI パイロット。
-    /// - 最近傍ウェイポイントから lookAheadDistance 先を「目標」とする
-    /// - 曲がりは基本バンクターン（ロールで横倒し → ピッチで曲がる）
+    /// RacePath に沿って飛ぶ AI パイロット。
+    /// - いちばん近い Waypoint から距離ベースで lookAhead 先をターゲットにする
+    /// - ターゲット「位置」に機体の向きを合わせる（シンプル方式）
+    /// - 急カーブはロールで横倒し → ピッチ強めで曲がる
+    /// - ラインから大きくズレそうなら減速もする
     /// </summary>
     [RequireComponent(typeof(Plane))]
     public class RacePathFollowerPilot : BasePlanePilot
@@ -63,16 +65,32 @@ namespace MFlight.Demo
         [Range(0f, 10f)]
         public float deadZoneAngleDeg = 1.0f;
 
-        [Header("Bank Turn Behaviour")]
-        [Tooltip("何度以上を『急カーブ』とみなすか（バンク角の絶対値）")]
-        public float sharpTurnBankThreshold = 30f;
+        [Header("Sharp Turn Behaviour")]
+        [Tooltip("何度以上（ターゲットへの角度）を『急カーブ』とみなすか（deg, yaw 基準）")]
+        public float sharpTurnAngleDeg = 20f;
 
         [Tooltip("急カーブ時にピッチ入力を何倍まで強めるか")]
         public float sharpTurnPitchMultiplier = 2.0f;
 
+        [Header("Line Following (lateral offset)")]
+        [Tooltip("ラインから横にズレたときのヨー補正の強さ（m → rad の係数）")]
+        public float lateralYawGain = 0.02f;
+
+        [Tooltip("横ズレとして扱う最大距離（それ以上は飽和）")]
+        public float maxLateralErrorMeters = 80f;
+
+        [Tooltip("この横ズレ以上で『かなりずれている』とみなして減速を強める")]
+        public float bigLateralErrorMeters = 40f;
+
         [Header("Speed Control")]
-        [Tooltip("目標速度（m/s）")]
-        public float desiredSpeed = 200f;
+        [Tooltip("直線〜ゆるいカーブでの巡航速度（m/s）")]
+        public float straightSpeed = 220f;
+
+        [Tooltip("急カーブ or 大きな横ズレ時まで落とす最低速度（m/s）")]
+        public float minSpeedOnSharpTurn = 140f;
+
+        [Tooltip("ターゲットへの角度がこの値（deg）以上で最小速度扱いにする")]
+        public float maxTurnAngleForMinSpeed = 60f;
 
         [Tooltip("速度誤差→スロットル入力への係数")]
         public float throttleGain = 0.5f;
@@ -113,7 +131,7 @@ namespace MFlight.Demo
                 return;
             }
 
-            IReadOnlyList<RacePath.Waypoint> wps = path.Waypoints;
+            var wps = path.Waypoints;
             if (wps == null || wps.Count < 2)
             {
                 ZeroInput();
@@ -123,7 +141,7 @@ namespace MFlight.Demo
             Vector3 planePos = plane.transform.position;
 
             // ─────────────────────
-            // 最近傍ウェイポイントの決定（前フレーム近傍だけ検索）
+            // 最近傍ウェイポイントの決定（前フレーム近傍だけ探索）
             // ─────────────────────
             int closestIndex;
             if (!_hasLastClosest)
@@ -146,102 +164,147 @@ namespace MFlight.Demo
             _lastClosestIndex = closestIndex;
 
             // ─────────────────────
-            // lookAheadDistance 分だけ先のターゲットを決める
+            // いまいる区間の線分に射影して「ライン上の最近傍点」と横ズレを求める
+            // ─────────────────────
+            int nextIndex = GetNextIndex(closestIndex, wps.Count, path.loop);
+            Vector3 wpA = wps[closestIndex].position;
+            Vector3 wpB = wps[nextIndex].position;
+
+            Vector3 ab = wpB - wpA;
+            float abSqrMag = ab.sqrMagnitude;
+            float tSeg = 0f;
+            if (abSqrMag > 0.0001f)
+            {
+                tSeg = Mathf.Clamp01(Vector3.Dot(planePos - wpA, ab) / abSqrMag);
+            }
+            Vector3 closestPointOnLine = wpA + ab * tSeg;
+
+            Vector3 offsetWorld = planePos - closestPointOnLine;
+            float lateralOffset = Vector3.Dot(offsetWorld, plane.transform.right); // 右＋左−（m）
+
+            // ─────────────────────
+            // 距離ベースの lookAhead ターゲット位置を決める
             // ─────────────────────
             int targetIndex = GetTargetIndexByDistance(closestIndex, wps);
             Vector3 targetPos = wps[targetIndex].position;
 
-            // ─────────────────────
-            // 進行方向制御（ピッチ／ヨー／ロール）
-            // ─────────────────────
+            // ターゲット方向（位置ベース）をローカル空間で見る
+            Vector3 toTargetWorld = (targetPos - planePos);
+            if (toTargetWorld.sqrMagnitude < 1e-4f)
+            {
+                ZeroInput();
+                return;
+            }
+            toTargetWorld.Normalize();
 
-            Vector3 toTargetWorld = (targetPos - planePos).normalized;
             Vector3 toTargetLocal = plane.transform.InverseTransformDirection(toTargetWorld);
 
-            // ローカル空間での方向誤差（ラジアン）
-            float yawError = Mathf.Atan2(toTargetLocal.x, toTargetLocal.z);   // 左右
-            float pitchError = Mathf.Atan2(toTargetLocal.y, toTargetLocal.z); // 上下
+            float yawErrorDir = Mathf.Atan2(toTargetLocal.x, toTargetLocal.z); // 左右
+            float pitchErrorDir = Mathf.Atan2(toTargetLocal.y, toTargetLocal.z); // 上下
+
+            // 横ズレからのヨー補正（線に戻すため）
+            float lateralClamped = Mathf.Clamp(lateralOffset, -maxLateralErrorMeters, maxLateralErrorMeters);
+            float yawFromLateral = -lateralClamped * lateralYawGain; // 右にズレてたら左向き
+
+            float yawError = yawErrorDir + yawFromLateral;
+            float pitchError = pitchErrorDir;
 
             float deadRad = deadZoneAngleDeg * Mathf.Deg2Rad;
             if (Mathf.Abs(yawError) < deadRad) yawError = 0f;
             if (Mathf.Abs(pitchError) < deadRad) pitchError = 0f;
 
-            // ========== 1. 目標バンク角（ロールで横倒しにする） ==========
+            // ========== 1. ロール（バンクターン） ==========
 
-            // yawError が大きいほどバンクも大きく
+            // yaw 誤差が大きいほどバンクを深くする
             float desiredBankDeg = Mathf.Clamp(
                 yawError * Mathf.Rad2Deg * bankFromYawGain,
                 -maxBankAngle,
                 maxBankAngle
             );
 
-            // 現在のバンク角（機体 up が world up からどれだけ傾いているか）
             float currentBankDeg = Vector3.SignedAngle(
-                plane.transform.up,      // 今の「上」
-                Vector3.up,              // 世界の「上」
-                plane.transform.forward  // 機体の進行方向を軸に測る
+                plane.transform.up,
+                Vector3.up,
+                plane.transform.forward
             );
 
             float bankErrorDeg = Mathf.DeltaAngle(currentBankDeg, desiredBankDeg);
             if (Mathf.Abs(bankErrorDeg) < deadZoneAngleDeg)
                 bankErrorDeg = 0f;
 
-            // バンク誤差からのロール入力
             float rollFromBank = bankErrorDeg * bankControlGain;
-
-            // yawError から直接ロールに足す分（お好みで）
             float rollFromYaw = yawError * Mathf.Rad2Deg * rollFromYawFactor * 0.01f;
 
             float rollInput = rollFromBank + rollFromYaw;
             rollInput = Mathf.Clamp(rollInput, -maxInput, maxInput);
             _roll = rollInputSign * rollInput;
 
-            // ========== 2. 急カーブ時はピッチを強める（バンク角に応じて） ==========
+            // ========== 2. ピッチ（急カーブ時に強める） ==========
 
-            // ベースのピッチ（ターゲット方向への誤差に基づく）
             float basePitch = pitchSign * pitchError * pitchGain;
 
-            // どれくらい「横倒し」かを見る（目標バンク角の絶対値で判定）
-            float bankAbs = Mathf.Abs(desiredBankDeg);
-
-            float t = 0f;
-            if (maxBankAngle > sharpTurnBankThreshold)
+            float yawDegAbs = Mathf.Abs(yawErrorDir * Mathf.Rad2Deg); // ターゲットへの角度ベース
+            float tSharp = 0f;
+            if (maxTurnAngleForMinSpeed > sharpTurnAngleDeg)
             {
-                t = Mathf.InverseLerp(sharpTurnBankThreshold, maxBankAngle, bankAbs);
-                t = Mathf.Clamp01(t);
+                tSharp = Mathf.InverseLerp(sharpTurnAngleDeg, maxTurnAngleForMinSpeed, yawDegAbs);
+                tSharp = Mathf.Clamp01(tSharp);
             }
 
-            // t=0 → 倍率 1, t=1 → 倍率 sharpTurnPitchMultiplier
-            float pitchMul = Mathf.Lerp(1f, sharpTurnPitchMultiplier, t);
-
+            float pitchMul = Mathf.Lerp(1f, sharpTurnPitchMultiplier, tSharp);
             _pitch = Mathf.Clamp(basePitch * pitchMul, -maxInput, maxInput);
 
-            // ========== 3. Yaw はあくまで補助（使いたければ small 値） ==========
+            // ========== 3. ヨー（方向＋横ズレ補正の合成、控えめ） ==========
             _yaw = Mathf.Clamp(
                 yawSign * yawError * yawInputGain,
                 -maxInput,
                 maxInput
             );
 
-            // ─────────────────────
-            // 速度制御 → throttleInput（増減指示）
-            // ─────────────────────
+            // ========== 4. 速度制御（ターンのきつさ＋横ズレで減速） ==========
+
             float speed = plane.Speed;
-            if (desiredSpeed > 0.1f)
+
+            // ターンのきつさから減速度合い
+            float tTurn = 0f;
+            if (maxTurnAngleForMinSpeed > 0.01f)
             {
-                float speedError = desiredSpeed - speed;
-                float tSpeed = (speedError / desiredSpeed) * throttleGain;
-                _throttleInput = Mathf.Clamp(tSpeed, -1f, 1f);
+                tTurn = Mathf.InverseLerp(0f, maxTurnAngleForMinSpeed, yawDegAbs);
+                tTurn = Mathf.Clamp01(tTurn);
             }
-            else
+
+            // 横ズレからも減速度合い
+            float latAbs = Mathf.Abs(lateralOffset);
+            float tLat = 0f;
+            if (bigLateralErrorMeters > 0.01f)
             {
-                _throttleInput = 0f;
+                tLat = Mathf.InverseLerp(0f, bigLateralErrorMeters, latAbs);
+                tLat = Mathf.Clamp01(tLat);
             }
+
+            // きついターン or 大きな横ズレ → 強めに減速
+            float tSlow = Mathf.Max(tTurn, tLat);
+
+            float targetSpeed = Mathf.Lerp(straightSpeed, minSpeedOnSharpTurn, tSlow);
+            if (targetSpeed < 0.1f) targetSpeed = 0.1f;
+
+            float speedError = targetSpeed - speed;
+            float tSpeed = (speedError / targetSpeed) * throttleGain;
+
+            _throttleInput = Mathf.Clamp(tSpeed, -1f, 1f);
         }
 
         private void ZeroInput()
         {
             _pitch = _yaw = _roll = _throttleInput = 0f;
+        }
+
+        private int GetNextIndex(int index, int count, bool loop)
+        {
+            if (loop)
+                return (index + 1) % count;
+            else
+                return Mathf.Min(index + 1, count - 1);
         }
 
         /// <summary>全ウェイポイントから最も近いインデックスを返す（初期化用）。</summary>
@@ -339,7 +402,6 @@ namespace MFlight.Demo
                 float totalLength = wps[count - 1].distance;
                 if (totalLength <= 0.01f) return closestIndex;
 
-                // ループなので距離を一周で丸める
                 targetDist = Mathf.Repeat(targetDist, totalLength);
 
                 int idx = closestIndex;
