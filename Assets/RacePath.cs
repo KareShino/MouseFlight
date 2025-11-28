@@ -3,37 +3,28 @@ using UnityEngine;
 
 /// <summary>
 /// ControlPoints（チェックポイント）を Catmull-Rom スプラインでつないで、
-/// 滑らかな Waypoints（位置＋距離＋向き）を生成するコンポーネント。
+/// 滑らかな Waypoints（位置＋距離）だけを生成するコンポーネント。
 /// 必要なら LineRenderer で可視化する。
 /// </summary>
 [ExecuteAlways]
 public class RacePath : MonoBehaviour
 {
     [Header("Control Points (通過順のチェックポイント)")]
-    [SerializeField]
-    private List<Transform> controlPoints = new List<Transform>();
+    [SerializeField] private List<Transform> controlPoints = new List<Transform>();
 
     [Header("Path Settings")]
     [Min(2)]
     public int subdivisionsPerSegment = 10; // 1区間を何分割するか
-
     public bool loop = false;               // 周回コースなら true
 
     [Header("Line Renderer (任意)")]
-    [SerializeField]
-    private LineRenderer lineRenderer;
+    [SerializeField] private LineRenderer lineRenderer;
 
     [System.Serializable]
     public struct Waypoint
     {
-        /// <summary>ワールド座標</summary>
-        public Vector3 position;
-
-        /// <summary>スタートからの累積距離</summary>
-        public float distance;
-
-        /// <summary>進行方向を表す向き（rotation * Vector3.forward が進行方向）</summary>
-        public Quaternion rotation;
+        public Vector3 position; // ワールド座標
+        public float distance;   // スタートからの累積距離
     }
 
     /// <summary>生成されたウェイポイント列</summary>
@@ -79,7 +70,6 @@ public class RacePath : MonoBehaviour
 
         int segmentCount = loop ? count : count - 1;
 
-        // まず「位置＋距離」だけ作る
         for (int i = 0; i < segmentCount; i++)
         {
             Vector3 p0 = GetControlPointPos(i - 1);
@@ -104,20 +94,15 @@ public class RacePath : MonoBehaviour
                     hasPrev = true;
                 }
 
-                Waypoint wp = new Waypoint
+                _waypoints.Add(new Waypoint
                 {
                     position = pos,
-                    distance = totalDist,
-                    rotation = Quaternion.identity // とりあえず後で埋める
-                };
+                    distance = totalDist
+                });
 
-                _waypoints.Add(wp);
                 prevPos = pos;
             }
         }
-
-        // 次に、「前後の点」から進行方向ベクトルを求めて rotation を埋める
-        ComputeWaypointRotations();
 
         // デバッグ用可視化（任意）
         if (lineRenderer != null)
@@ -127,53 +112,6 @@ public class RacePath : MonoBehaviour
             {
                 lineRenderer.SetPosition(i, _waypoints[i].position);
             }
-        }
-    }
-
-    // ───────────────────────────────
-    // 向きの計算
-    // ───────────────────────────────
-
-    /// <summary>
-    /// Waypoints の position 列から進行方向を推定して rotation を埋める。
-    /// 各点について「前の点」と「次の点」を見ることで、滑らかな向きを求める。
-    /// </summary>
-    private void ComputeWaypointRotations()
-    {
-        int n = _waypoints.Count;
-        if (n == 0) return;
-
-        for (int i = 0; i < n; i++)
-        {
-            Vector3 prevPos;
-            Vector3 nextPos;
-
-            if (loop)
-            {
-                int prevIndex = (i - 1 + n) % n;
-                int nextIndex = (i + 1) % n;
-                prevPos = _waypoints[prevIndex].position;
-                nextPos = _waypoints[nextIndex].position;
-            }
-            else
-            {
-                int prevIndex = Mathf.Max(i - 1, 0);
-                int nextIndex = Mathf.Min(i + 1, n - 1);
-                prevPos = _waypoints[prevIndex].position;
-                nextPos = _waypoints[nextIndex].position;
-            }
-
-            Vector3 dir = nextPos - prevPos;
-            if (dir.sqrMagnitude < 1e-6f)
-            {
-                // ほぼ同じ位置の場合は適当な向き（前のものがあれば流用）
-                dir = Vector3.forward;
-            }
-            dir.Normalize();
-
-            Waypoint wp = _waypoints[i];
-            wp.rotation = Quaternion.LookRotation(dir, Vector3.up);
-            _waypoints[i] = wp;
         }
     }
 
