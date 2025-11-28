@@ -7,7 +7,6 @@ namespace MFlight.Demo
     /// RacePath のウェイポイント列に沿って飛行機をなぞらせる AI パイロット。
     /// - 最近傍ウェイポイントから lookAheadDistance 先を「目標」とする
     /// - 曲がりは基本バンクターン（ロールで横倒し → ピッチで曲がる）
-    /// - 急カーブではバンク角に応じて減速する
     /// </summary>
     [RequireComponent(typeof(Plane))]
     public class RacePathFollowerPilot : BasePlanePilot
@@ -72,14 +71,8 @@ namespace MFlight.Demo
         public float sharpTurnPitchMultiplier = 2.0f;
 
         [Header("Speed Control")]
-        [Tooltip("直線〜ゆるいカーブでの巡航速度（m/s）")]
-        public float straightSpeed = 220f;
-
-        [Tooltip("急カーブ時まで落とす最低速度（m/s）")]
-        public float minSpeedOnSharpTurn = 140f;
-
-        [Tooltip("このバンク角以上で最小速度になる（deg）")]
-        public float maxTurnForMinSpeed = 60f;
+        [Tooltip("目標速度（m/s）")]
+        public float desiredSpeed = 200f;
 
         [Tooltip("速度誤差→スロットル入力への係数")]
         public float throttleGain = 0.5f;
@@ -211,15 +204,15 @@ namespace MFlight.Demo
             // どれくらい「横倒し」かを見る（目標バンク角の絶対値で判定）
             float bankAbs = Mathf.Abs(desiredBankDeg);
 
-            float tBank = 0f;
+            float t = 0f;
             if (maxBankAngle > sharpTurnBankThreshold)
             {
-                tBank = Mathf.InverseLerp(sharpTurnBankThreshold, maxBankAngle, bankAbs);
-                tBank = Mathf.Clamp01(tBank);
+                t = Mathf.InverseLerp(sharpTurnBankThreshold, maxBankAngle, bankAbs);
+                t = Mathf.Clamp01(t);
             }
 
             // t=0 → 倍率 1, t=1 → 倍率 sharpTurnPitchMultiplier
-            float pitchMul = Mathf.Lerp(1f, sharpTurnPitchMultiplier, tBank);
+            float pitchMul = Mathf.Lerp(1f, sharpTurnPitchMultiplier, t);
 
             _pitch = Mathf.Clamp(basePitch * pitchMul, -maxInput, maxInput);
 
@@ -232,27 +225,18 @@ namespace MFlight.Demo
 
             // ─────────────────────
             // 速度制御 → throttleInput（増減指示）
-            //   ・直線では straightSpeed 付近
-            //   ・強いバンク時は minSpeedOnSharpTurn まで落とす
             // ─────────────────────
             float speed = plane.Speed;
-
-            // バンク角に応じて目標速度を補間
-            float tTurnSpeed = 0f;
-            if (maxTurnForMinSpeed > 0.01f)
+            if (desiredSpeed > 0.1f)
             {
-                tTurnSpeed = Mathf.InverseLerp(0f, maxTurnForMinSpeed, bankAbs);
-                tTurnSpeed = Mathf.Clamp01(tTurnSpeed);
+                float speedError = desiredSpeed - speed;
+                float tSpeed = (speedError / desiredSpeed) * throttleGain;
+                _throttleInput = Mathf.Clamp(tSpeed, -1f, 1f);
             }
-
-            float targetSpeed = Mathf.Lerp(straightSpeed, minSpeedOnSharpTurn, tTurnSpeed);
-
-            if (targetSpeed < 0.1f) targetSpeed = 0.1f;
-
-            float speedError = targetSpeed - speed;
-            float tSpeed = (speedError / targetSpeed) * throttleGain;
-
-            _throttleInput = Mathf.Clamp(tSpeed, -1f, 1f);
+            else
+            {
+                _throttleInput = 0f;
+            }
         }
 
         private void ZeroInput()
