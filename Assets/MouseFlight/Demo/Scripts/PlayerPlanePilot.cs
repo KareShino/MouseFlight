@@ -10,11 +10,16 @@ namespace MFlight.Demo
     [RequireComponent(typeof(Plane))]
     public class PlayerPlanePilot : BasePlanePilot
     {
+
+        [SerializeField] private PlaneSkillController skillController;
+        [SerializeField] private PlaneSkill equippedSkill;
+
         [Header("Input Actions")]
         public InputActionReference pitchAction;
         public InputActionReference yawAction;
         public InputActionReference rollAction;
         public InputActionReference throttleAction;
+        public InputActionReference skillAction;
 
         private float _pitch;
         private float _yaw;
@@ -32,6 +37,7 @@ namespace MFlight.Demo
             if (yawAction != null) yawAction.action.Enable();
             if (rollAction != null) rollAction.action.Enable();
             if (throttleAction != null) throttleAction.action.Enable();
+            if (skillAction != null) skillAction.action.Enable();
         }
 
         private void OnDisable()
@@ -61,6 +67,11 @@ namespace MFlight.Demo
 
             // スロットル入力（-1 ～ 1）
             _throttleInput = Mathf.Clamp(throttleAction.action.ReadValue<float>(), -1f, 1f);
+
+            if (skillAction.action.triggered)
+            {
+                skillController.UseSkill(equippedSkill);
+            }
         }
     }
 }

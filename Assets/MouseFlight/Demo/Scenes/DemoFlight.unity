@@ -1341,7 +1341,7 @@ PrefabInstance:
         type: 3}
       propertyPath: aircraft
       value: 
-      objectReference: {fileID: 1871632385}
+      objectReference: {fileID: 4563114451573410}
     - target: {fileID: 114412280367074530, guid: 1ffc29c315992624cb793d6cbf2c4ac1,
         type: 3}
       propertyPath: followPlaneFactor
@@ -1868,6 +1868,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1153318254}
+  - component: {fileID: 1153318255}
   m_Layer: 0
   m_Name: TimeScale
   m_TagString: Untagged
@@ -1890,6 +1891,19 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1153318255
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1153318253}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9ef2921d8a32cdb41acca9fab92c3629, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  timeScale: 1
 --- !u!1001 &1156091530
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -3002,26 +3016,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   path: {fileID: 989722953}
-  lookAheadDistance: 2000
-  searchBackwardCount: 5
-  searchForwardCount: 30
-  useNearAndNextWaypoints: 1
-  nearSegmentWeight: 0.779
-  pitchGain: 3
-  yawInputGain: 4
-  pitchSign: -1
-  yawSign: 1
-  bankFromYawGain: 2
-  maxBankAngle: 100
-  bankControlGain: 1
-  rollInputSign: 2
-  rollFromYawFactor: 4
-  maxInput: 1
-  deadZoneAngleDeg: 3.28
-  sharpTurnBankThreshold: 30
-  sharpTurnPitchMultiplier: 2
-  desiredSpeed: 400
-  throttleGain: 0.5
+  settings: {fileID: 11400000, guid: ca6d827316b4a4644b6dd0a62f52bc5c, type: 2}
 --- !u!114 &1871632383
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3035,6 +3030,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   pilot: {fileID: 1871632382}
+  planeStats: {fileID: 11400000, guid: a21d743afddbb644d8a79218e6f47102, type: 2}
   thrust: 400
   turnTorque: {x: 90, y: 25, z: 45}
   forceMult: 100
@@ -3648,6 +3644,7 @@ GameObject:
   - component: {fileID: 54841045659793536}
   - component: {fileID: 54841045659793538}
   - component: {fileID: 54841045659793537}
+  - component: {fileID: 54841045659793539}
   m_Layer: 0
   m_Name: Plane
   m_TagString: Untagged
@@ -4105,6 +4102,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cc37b153e9ca08b4f837a826ac54649e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  skillController: {fileID: 54841045659793539}
+  equippedSkill: {fileID: 11400000, guid: c5f49ebdd2685424bb571e80b5293d9c, type: 2}
   pitchAction: {fileID: 1751074972512765509, guid: 03659bec264b17e4581a44e77af23294,
     type: 3}
   yawAction: {fileID: -1150824947564424751, guid: 03659bec264b17e4581a44e77af23294,
@@ -4112,6 +4111,8 @@ MonoBehaviour:
   rollAction: {fileID: -7205323525228689151, guid: 03659bec264b17e4581a44e77af23294,
     type: 3}
   throttleAction: {fileID: 2154674618695082745, guid: 03659bec264b17e4581a44e77af23294,
+    type: 3}
+  skillAction: {fileID: 8703883252139380037, guid: 03659bec264b17e4581a44e77af23294,
     type: 3}
 --- !u!114 &54841045659793538
 MonoBehaviour:
@@ -4126,6 +4127,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   pilot: {fileID: 54841045659793537}
+  planeStats: {fileID: 11400000, guid: a21d743afddbb644d8a79218e6f47102, type: 2}
   thrust: 400
   turnTorque: {x: 90, y: 25, z: 45}
   forceMult: 100
@@ -4138,6 +4140,18 @@ MonoBehaviour:
   roll: 0
   throttle: 0
   speed: 0
+--- !u!114 &54841045659793539
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1630318330911044}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 068e99e35117cb647be082661155ba1e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!65 &65470978916907156
 BoxCollider:
   m_ObjectHideFlags: 0

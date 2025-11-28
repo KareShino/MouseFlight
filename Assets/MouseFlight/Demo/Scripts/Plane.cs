@@ -9,12 +9,16 @@ namespace MFlight.Demo
         [Tooltip("BasePlanePilot を継承したコンポーネントを割り当てる")]
         [SerializeField] private BasePlanePilot pilot;
 
-        [Header("Physics")]
+        [Header("Stats")]
+        [Tooltip("飛行機のステータス（ScriptableObject）")]
+        [SerializeField] private PlaneStats planeStats;
+
+        [Header("Physics (Runtime View)")]
         public float thrust = 100f;
         public Vector3 turnTorque = new Vector3(90f, 25f, 45f);
         public float forceMult = 1000f;
         public float drag = 0.01f;
-        public float throttleSpeed = 0.5f; // スロットルの上がり下がり速度
+        public float throttleSpeed = 0.5f;
 
         [Header("Pseudo Gravity (前後だけ)")]
         [Tooltip("機首上下による疑似的な加減速の強さ")]
@@ -40,10 +44,32 @@ namespace MFlight.Demo
         /// <summary>内部 Rigidbody の参照（AI などで使いたい場合用）。</summary>
         public Rigidbody Rigidbody => rb;
 
+        public PlaneStats Stats => planeStats;
+
+        private void Reset()
+        {
+            rb = GetComponent<Rigidbody>();
+        }
+
         private void Awake()
         {
             rb = GetComponent<Rigidbody>();
-            throttle = minThrottle; // 初期値
+
+            // ScriptableObject から値を反映
+            if (planeStats != null)
+            {
+                ApplyStats(planeStats);
+            }
+
+            // 初期スロットル
+            if (planeStats != null)
+            {
+                throttle = Mathf.Clamp01(planeStats.initialThrottle);
+            }
+            else
+            {
+                throttle = minThrottle;
+            }
 
             if (pilot != null)
             {
@@ -53,6 +79,24 @@ namespace MFlight.Demo
             {
                 Debug.LogWarning($"{name}: Plane - BasePlanePilot が設定されていません。");
             }
+        }
+
+        /// <summary>
+        /// ScriptableObject からパラメータをコピー。
+        /// プレハブ複製時や難易度変更時に差し替えてもOK。
+        /// </summary>
+        public void ApplyStats(PlaneStats stats)
+        {
+            if (stats == null) return;
+
+            planeStats = stats;
+            thrust = stats.thrust;
+            turnTorque = stats.turnTorque;
+            forceMult = stats.forceMult;
+            drag = stats.drag;
+            throttleSpeed = stats.throttleSpeed;
+            pseudoGravityStrength = stats.pseudoGravityStrength;
+            minThrottle = stats.minThrottle;
         }
 
         private void Update()
@@ -69,7 +113,7 @@ namespace MFlight.Demo
 
             float tInput = Mathf.Clamp(pilot.ThrottleInput, -1f, 1f);
 
-            // ★ここで minThrottle ～ 1 に徐々に近づける（元のロジック踏襲）
+            // minThrottle ～ 1 に徐々に近づける
             throttle = Mathf.Clamp(
                 throttle + tInput * throttleSpeed * Time.deltaTime,
                 minThrottle,
@@ -88,8 +132,6 @@ namespace MFlight.Demo
             );
 
             // ② 機首上下による疑似重力の前後加速
-            // forward.y < 0 … 機首下げ → -forward.y は正 → 前に押す
-            // forward.y > 0 … 機首上げ → -forward.y は負 → 後ろに押す（減速）
             float pitchFactor = -transform.forward.y; // -1 〜 1
             rb.AddRelativeForce(
                 Vector3.forward * pitchFactor * pseudoGravityStrength * forceMult,

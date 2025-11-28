@@ -1,0 +1,34 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 460018e28c1871049b29da33e186109c, type: 3}
+  m_Name: RacePathFollowerSettings_Default
+  m_EditorClassIdentifier: 
+  lookAheadDistance: 2000
+  searchBackwardCount: 5
+  searchForwardCount: 30
+  useNearAndNextWaypoints: 1
+  nearSegmentWeight: 0.8
+  pitchGain: 2
+  yawInputGain: 4
+  pitchSign: -1
+  yawSign: 1
+  bankFromYawGain: 2
+  maxBankAngle: 100
+  bankControlGain: 1
+  rollInputSign: 2
+  rollFromYawFactor: 4
+  maxInput: 1
+  deadZoneAngleDeg: 3.28
+  sharpTurnBankThreshold: 30
+  sharpTurnPitchMultiplier: 2
+  desiredSpeed: 400
+  throttleGain: 0.5
