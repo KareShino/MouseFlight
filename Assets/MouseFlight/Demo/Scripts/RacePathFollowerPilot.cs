@@ -4,9 +4,10 @@ using System.Collections.Generic;
 namespace MFlight.Demo
 {
     /// <summary>
-    /// RacePath のウェイポイント列に沿って飛行機をなぞらせる AI パイロット。
-    /// - 最近傍ウェイポイントから lookAheadDistance 先を「目標」とする
-    /// - 曲がりは基本バンクターン（ロールで横倒し → ピッチで曲がる）
+    /// RacePath の「線」をなぞる AI パイロット。
+    /// - 最近傍ウェイポイント付近の線分に射影して「線として」捉える
+    /// - 向きは Waypoint.rotation （コースの進行方向）に合わせる
+    /// - 横ズレが大きいときは、バンク＋ヨー＋減速でライン復帰を優先
     /// </summary>
     [RequireComponent(typeof(Plane))]
     public class RacePathFollowerPilot : BasePlanePilot
@@ -15,7 +16,7 @@ namespace MFlight.Demo
         [Tooltip("なぞりたい RacePath")]
         public RacePath path;
 
-        [Tooltip("いまの位置から、この距離だけ先を狙う（メートル単位）")]
+        [Tooltip("いまの距離から、この距離だけ先を狙う（メートル単位）")]
         public float lookAheadDistance = 80f;
 
         [Header("Waypoint Search")]
@@ -70,9 +71,25 @@ namespace MFlight.Demo
         [Tooltip("急カーブ時にピッチ入力を何倍まで強めるか")]
         public float sharpTurnPitchMultiplier = 2.0f;
 
+        [Header("Line Following (lateral offset)")]
+        [Tooltip("線から横方向にズレたときのヨー補正の強さ（m → rad 換算係数）")]
+        public float lateralYawGain = 0.05f;
+
+        [Tooltip("横ズレとして扱う最大距離（それ以上は飽和）")]
+        public float maxLateralErrorMeters = 50f;
+
+        [Tooltip("この横ズレ以上で『かなりずれている』とみなして減速を強める")]
+        public float bigLateralErrorMeters = 30f;
+
         [Header("Speed Control")]
-        [Tooltip("目標速度（m/s）")]
-        public float desiredSpeed = 200f;
+        [Tooltip("直線〜ゆるいカーブでの巡航速度（m/s）")]
+        public float straightSpeed = 220f;
+
+        [Tooltip("急カーブ or 大きな横ズレ時まで落とす最低速度（m/s）")]
+        public float minSpeedOnSharpTurn = 140f;
+
+        [Tooltip("このバンク角以上で最小速度になる（deg）")]
+        public float maxTurnForMinSpeed = 60f;
 
         [Tooltip("速度誤差→スロットル入力への係数")]
         public float throttleGain = 0.5f;
@@ -123,7 +140,7 @@ namespace MFlight.Demo
             Vector3 planePos = plane.transform.position;
 
             // ─────────────────────
-            // 最近傍ウェイポイントの決定（前フレーム近傍だけ検索）
+            // 最近傍ウェイポイント付近を探索して「今いる区間」を決める
             // ─────────────────────
             int closestIndex;
             if (!_hasLastClosest)
@@ -145,51 +162,77 @@ namespace MFlight.Demo
 
             _lastClosestIndex = closestIndex;
 
+            // 次のウェイポイント（線分の終点）
+            int nextIndex = GetNextIndex(closestIndex, wps.Count, path.loop);
+
+            Vector3 wpA = wps[closestIndex].position;
+            Vector3 wpB = wps[nextIndex].position;
+
+            // 線分 AB に自機を射影 → 「線としての最近傍点」を取る
+            Vector3 ab = wpB - wpA;
+            float abSqrMag = ab.sqrMagnitude;
+            float tSeg = 0f;
+            if (abSqrMag > 0.0001f)
+            {
+                tSeg = Mathf.Clamp01(Vector3.Dot(planePos - wpA, ab) / abSqrMag);
+            }
+            Vector3 closestPointOnLine = wpA + ab * tSeg;
+
+            // 横ズレ量（右＋ / 左−）を計算（機体ローカル右方向で測る）
+            Vector3 offsetWorld = planePos - closestPointOnLine;
+            float lateralOffset = Vector3.Dot(offsetWorld, plane.transform.right); // m
+
             // ─────────────────────
-            // lookAheadDistance 分だけ先のターゲットを決める
+            // 距離ベースで lookAheadDistance 先のターゲットインデックスを決める
             // ─────────────────────
             int targetIndex = GetTargetIndexByDistance(closestIndex, wps);
-            Vector3 targetPos = wps[targetIndex].position;
+            RacePath.Waypoint targetWp = wps[targetIndex];
+
+            // 線としての「進行方向」は Waypoint.rotation の forward を使う
+            Vector3 desiredForwardWorld = targetWp.rotation * Vector3.forward;
+            desiredForwardWorld.Normalize();
+
+            // 機体ローカルに変換して、向きの誤差を取る
+            Vector3 desiredForwardLocal = plane.transform.InverseTransformDirection(desiredForwardWorld);
+
+            float yawErrorDir = Mathf.Atan2(desiredForwardLocal.x, desiredForwardLocal.z);
+            float pitchErrorDir = Mathf.Atan2(desiredForwardLocal.y, desiredForwardLocal.z);
 
             // ─────────────────────
-            // 進行方向制御（ピッチ／ヨー／ロール）
+            // 横ズレからのヨー補正（線に戻すための成分）
             // ─────────────────────
+            float lateral = Mathf.Clamp(lateralOffset, -maxLateralErrorMeters, maxLateralErrorMeters);
 
-            Vector3 toTargetWorld = (targetPos - planePos).normalized;
-            Vector3 toTargetLocal = plane.transform.InverseTransformDirection(toTargetWorld);
+            // 右にズレていれば左へ向ける（符号反転）
+            float yawFromLateral = -lateral * lateralYawGain; // meters → radians くらいのイメージ
 
-            // ローカル空間での方向誤差（ラジアン）
-            float yawError = Mathf.Atan2(toTargetLocal.x, toTargetLocal.z);   // 左右
-            float pitchError = Mathf.Atan2(toTargetLocal.y, toTargetLocal.z); // 上下
+            // 合成ヨー誤差
+            float yawError = yawErrorDir + yawFromLateral;
+            float pitchError = pitchErrorDir;
 
             float deadRad = deadZoneAngleDeg * Mathf.Deg2Rad;
             if (Mathf.Abs(yawError) < deadRad) yawError = 0f;
             if (Mathf.Abs(pitchError) < deadRad) pitchError = 0f;
 
-            // ========== 1. 目標バンク角（ロールで横倒しにする） ==========
+            // ========== 1. 目標バンク角（バンクターン） ==========
 
-            // yawError が大きいほどバンクも大きく
             float desiredBankDeg = Mathf.Clamp(
                 yawError * Mathf.Rad2Deg * bankFromYawGain,
                 -maxBankAngle,
                 maxBankAngle
             );
 
-            // 現在のバンク角（機体 up が world up からどれだけ傾いているか）
             float currentBankDeg = Vector3.SignedAngle(
-                plane.transform.up,      // 今の「上」
-                Vector3.up,              // 世界の「上」
-                plane.transform.forward  // 機体の進行方向を軸に測る
+                plane.transform.up,
+                Vector3.up,
+                plane.transform.forward
             );
 
             float bankErrorDeg = Mathf.DeltaAngle(currentBankDeg, desiredBankDeg);
             if (Mathf.Abs(bankErrorDeg) < deadZoneAngleDeg)
                 bankErrorDeg = 0f;
 
-            // バンク誤差からのロール入力
             float rollFromBank = bankErrorDeg * bankControlGain;
-
-            // yawError から直接ロールに足す分（お好みで）
             float rollFromYaw = yawError * Mathf.Rad2Deg * rollFromYawFactor * 0.01f;
 
             float rollInput = rollFromBank + rollFromYaw;
@@ -198,25 +241,20 @@ namespace MFlight.Demo
 
             // ========== 2. 急カーブ時はピッチを強める（バンク角に応じて） ==========
 
-            // ベースのピッチ（ターゲット方向への誤差に基づく）
             float basePitch = pitchSign * pitchError * pitchGain;
 
-            // どれくらい「横倒し」かを見る（目標バンク角の絶対値で判定）
             float bankAbs = Mathf.Abs(desiredBankDeg);
-
-            float t = 0f;
+            float tBank = 0f;
             if (maxBankAngle > sharpTurnBankThreshold)
             {
-                t = Mathf.InverseLerp(sharpTurnBankThreshold, maxBankAngle, bankAbs);
-                t = Mathf.Clamp01(t);
+                tBank = Mathf.InverseLerp(sharpTurnBankThreshold, maxBankAngle, bankAbs);
+                tBank = Mathf.Clamp01(tBank);
             }
 
-            // t=0 → 倍率 1, t=1 → 倍率 sharpTurnPitchMultiplier
-            float pitchMul = Mathf.Lerp(1f, sharpTurnPitchMultiplier, t);
-
+            float pitchMul = Mathf.Lerp(1f, sharpTurnPitchMultiplier, tBank);
             _pitch = Mathf.Clamp(basePitch * pitchMul, -maxInput, maxInput);
 
-            // ========== 3. Yaw はあくまで補助（使いたければ small 値） ==========
+            // ========== 3. Yaw は向き＋横ズレ補正の結果を小さめに反映 ==========
             _yaw = Mathf.Clamp(
                 yawSign * yawError * yawInputGain,
                 -maxInput,
@@ -224,24 +262,51 @@ namespace MFlight.Demo
             );
 
             // ─────────────────────
-            // 速度制御 → throttleInput（増減指示）
+            // 速度制御（急カーブ or 大きな横ズレなら減速）
             // ─────────────────────
             float speed = plane.Speed;
-            if (desiredSpeed > 0.1f)
+
+            // バンクと横ズレの両方から「どれだけ危ない旋回か」を見る
+            float tTurn = 0f;
+            if (maxTurnForMinSpeed > 0.01f)
             {
-                float speedError = desiredSpeed - speed;
-                float tSpeed = (speedError / desiredSpeed) * throttleGain;
-                _throttleInput = Mathf.Clamp(tSpeed, -1f, 1f);
+                tTurn = Mathf.InverseLerp(0f, maxTurnForMinSpeed, bankAbs);
             }
-            else
+
+            float lateralAbs = Mathf.Abs(lateralOffset);
+            float tLat = 0f;
+            if (bigLateralErrorMeters > 0.01f)
             {
-                _throttleInput = 0f;
+                tLat = Mathf.InverseLerp(0f, bigLateralErrorMeters, lateralAbs);
             }
+
+            // バンクと横ズレのうち「きつい方」を採用
+            float tSlow = Mathf.Clamp01(Mathf.Max(tTurn, tLat));
+
+            float targetSpeed = Mathf.Lerp(straightSpeed, minSpeedOnSharpTurn, tSlow);
+            if (targetSpeed < 0.1f) targetSpeed = 0.1f;
+
+            float speedError = targetSpeed - speed;
+            float tSpeed = (speedError / targetSpeed) * throttleGain;
+
+            _throttleInput = Mathf.Clamp(tSpeed, -1f, 1f);
         }
 
         private void ZeroInput()
         {
             _pitch = _yaw = _roll = _throttleInput = 0f;
+        }
+
+        private int GetNextIndex(int index, int count, bool loop)
+        {
+            if (loop)
+            {
+                return (index + 1) % count;
+            }
+            else
+            {
+                return Mathf.Min(index + 1, count - 1);
+            }
         }
 
         /// <summary>全ウェイポイントから最も近いインデックスを返す（初期化用）。</summary>
@@ -339,7 +404,6 @@ namespace MFlight.Demo
                 float totalLength = wps[count - 1].distance;
                 if (totalLength <= 0.01f) return closestIndex;
 
-                // ループなので距離を一周で丸める
                 targetDist = Mathf.Repeat(targetDist, totalLength);
 
                 int idx = closestIndex;
