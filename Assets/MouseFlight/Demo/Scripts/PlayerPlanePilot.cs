@@ -25,6 +25,7 @@ namespace MFlight.Demo
 
         [Header("Weapon Input")]
         public InputActionReference missileAction;
+        public InputActionReference targetChangeAction;
 
         private float _pitch;
         private float _yaw;
@@ -44,6 +45,7 @@ namespace MFlight.Demo
             if (throttleAction != null) throttleAction.action.Enable();
             if (skillAction != null) skillAction.action.Enable();
             if (missileAction != null) missileAction.action.Enable();
+            if (targetChangeAction != null) targetChangeAction.action.Enable();
         }
 
         private void OnDisable()
@@ -53,6 +55,7 @@ namespace MFlight.Demo
             if (rollAction != null) rollAction.action.Disable();
             if (throttleAction != null) throttleAction.action.Disable();
             if (missileAction != null) missileAction.action.Disable();
+            if (targetChangeAction != null) targetChangeAction.action.Disable();
         }
 
         public override void TickPilot()
@@ -86,6 +89,16 @@ namespace MFlight.Demo
                 if (missileLauncher != null && lockOnSystem != null && lockOnSystem.CurrentTarget != null)
                 {
                     missileLauncher.FireAt(lockOnSystem.CurrentTarget.transform);
+                }
+            }
+
+            // ★ ターゲット変更キー
+            if (targetChangeAction != null && targetChangeAction.action.triggered)
+            {
+                if (lockOnSystem != null)
+                {
+                    // 右回しだけなら +1 でOK。逆回転したければ -1 を使う。
+                    lockOnSystem.CycleTarget(+1);
                 }
             }
         }
