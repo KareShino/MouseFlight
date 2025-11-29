@@ -1,4 +1,5 @@
 ﻿using UnityEngine;
+using System.Collections;
 
 namespace MFlight.Demo
 {
@@ -12,6 +13,17 @@ namespace MFlight.Demo
         [Header("Stats")]
         [Tooltip("飛行機のステータス（ScriptableObject）")]
         [SerializeField] private PlaneStats planeStats;
+
+        [Header("Crash Settings")]
+        public bool isCrashed = false;
+        public float crashTorque = 500f; // スピンさせる力
+        public float crashDrag = 0.2f;   // 空気抵抗増やして落ちやすく
+
+        private Vector3 lastCrashPosition;
+        private Quaternion lastCrashRotation;
+        [SerializeField] private float respawnDelay = 3f;
+
+        private float defaultLinearDamping;   // もともとの減衰を保存
 
         [Header("Physics (Runtime View)")]
         public float thrust = 100f;
@@ -59,7 +71,15 @@ namespace MFlight.Demo
             if (planeStats != null)
             {
                 ApplyStats(planeStats);
+                throttle = Mathf.Clamp01(planeStats.initialThrottle);
             }
+            else
+            {
+                throttle = minThrottle;
+            }
+
+            // ★ もともとの linearDamping を記録しておく
+            defaultLinearDamping = rb.linearDamping;
 
             // 初期スロットル
             if (planeStats != null)
@@ -125,20 +145,33 @@ namespace MFlight.Demo
         {
             if (rb == null) return;
 
-            // ① エンジン推力（スロットル）
+            if (isCrashed)
+            {
+                // 操作無効
+                pitch = yaw = roll = 0f;
+                throttle = 0f;
+
+                // スピン継続させたいならここでトルクを足し続ける
+                rb.AddTorque(transform.right * crashTorque, ForceMode.Force);
+
+                // 空気抵抗はクラッシュ用の値のまま（復帰時に戻す）
+                rb.linearDamping = crashDrag;
+
+                return;
+            }
+
+            // --- 以下、通常飛行処理 ---
             rb.AddRelativeForce(
                 Vector3.forward * thrust * throttle * forceMult,
                 ForceMode.Force
             );
 
-            // ② 機首上下による疑似重力の前後加速
-            float pitchFactor = -transform.forward.y; // -1 〜 1
+            float pitchFactor = -transform.forward.y;
             rb.AddRelativeForce(
                 Vector3.forward * pitchFactor * pseudoGravityStrength * forceMult,
                 ForceMode.Force
             );
 
-            // ③ 回転トルク（入力）
             rb.AddRelativeTorque(
                 new Vector3(
                     turnTorque.x * pitch,
@@ -148,7 +181,6 @@ namespace MFlight.Demo
                 ForceMode.Force
             );
 
-            // ③.5 バンクターン（ロール角による自然な曲がり）
             float bank = transform.right.y;
             float bankTurnStrength = 0.6f;
             rb.AddRelativeTorque(
@@ -156,10 +188,72 @@ namespace MFlight.Demo
                 ForceMode.Force
             );
 
-            // ④ 空気抵抗（速度に比例した減速）
             rb.AddForce(-rb.linearVelocity * drag, ForceMode.Force);
 
             speed = rb.linearVelocity.magnitude;
         }
+
+        public void Crash()
+        {
+            if (isCrashed) return;
+
+            isCrashed = true;
+
+            // リスポーン用に現在位置と向きを保存
+            lastCrashPosition = transform.position;
+            lastCrashRotation = transform.rotation;
+
+            // スロットルと入力はゼロに
+            throttle = 0f;
+            pitch = yaw = roll = 0f;
+
+            // 推進力は変えなくてもいいが、変えたいならここで 0 にしてもOK
+            // thrust = 0f;
+
+            // 派手なスピン＆吹っ飛び
+            Vector3 spin = new Vector3(
+                0f,
+                0f,
+                Random.Range(1.5f, 2.5f)
+            );
+            rb.AddTorque(spin * crashTorque, ForceMode.Impulse);
+            rb.AddForce(Random.insideUnitSphere * (rb.mass * 20f), ForceMode.Impulse);
+
+            // クラッシュ中の空気抵抗アップ
+            rb.linearDamping = crashDrag;
+
+            // 一定時間後にリスポーン
+            StartCoroutine(RespawnAfterDelay());
+        }
+
+        private IEnumerator RespawnAfterDelay()
+        {
+            yield return new WaitForSeconds(respawnDelay);
+
+            // ★ ここが重要：速度と回転速度をゼロにする
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+
+            // ★ 減衰も元に戻す
+            rb.linearDamping = defaultLinearDamping;
+
+            // 位置と向きを復元（またはコース上の安全な向きにしてもいい）
+            transform.position = lastCrashPosition;
+            transform.rotation = lastCrashRotation;
+
+            // thrust / throttle を復帰
+            if (planeStats != null)
+            {
+                ApplyStats(planeStats);
+                throttle = Mathf.Clamp01(planeStats.initialThrottle);
+            }
+            else
+            {
+                throttle = minThrottle;
+            }
+
+            isCrashed = false;
+        }
+
     }
 }

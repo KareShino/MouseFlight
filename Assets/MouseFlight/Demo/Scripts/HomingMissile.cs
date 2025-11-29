@@ -19,14 +19,31 @@ namespace MFlight.Demo
         private Transform _target;
         private float _timer;
 
+        private Plane _ownerPlane;
+        private Collider _myCollider;
+
         public void SetTarget(Transform target)
         {
             _target = target;
         }
 
+        public void SetOwner(Plane owner)
+        {
+            _ownerPlane = owner;
+
+            if (_ownerPlane == null || _myCollider == null) return;
+
+            var ownerColliders = _ownerPlane.GetComponentsInChildren<Collider>();
+            foreach (var col in ownerColliders)
+            {
+                Physics.IgnoreCollision(_myCollider, col);
+            }
+        }
+
         private void Awake()
         {
             _rb = GetComponent<Rigidbody>();
+            _myCollider = GetComponent<Collider>();
         }
 
         private void OnEnable()
@@ -66,18 +83,22 @@ namespace MFlight.Demo
 
         private void OnCollisionEnter(Collision collision)
         {
-            // ここでダメージ処理などをする
+            // ★ まずオーナーかどうかチェック
+            var plane = collision.collider.GetComponentInParent<Plane>();
+            if (plane != null && plane == _ownerPlane)
+            {
+                // 発射元には当たらない
+                return;
+            }
+
             if (explosionPrefab != null)
             {
                 Instantiate(explosionPrefab, transform.position, Quaternion.identity);
             }
 
-            // ざっくり Plane にダメージを与える例
-            var plane = collision.collider.GetComponentInParent<Plane>();
             if (plane != null)
             {
-                // HP システムを別で作っていれば、そこを呼ぶ
-                // plane.GetComponent<PlaneHealth>()?.ApplyDamage(damage);
+                plane.Crash();   // 以前書いた墜落処理
             }
 
             Destroy(gameObject);

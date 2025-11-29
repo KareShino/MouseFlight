@@ -6,22 +6,31 @@ namespace MFlight.Demo
     {
         [Header("Missile")]
         public HomingMissile missilePrefab;
-        public Transform muzzle;        // ”­ŽËˆÊ’u
-        public float fireInterval = 1f; // ˜AŽËŠÔŠu
+        public Transform muzzle;
+        public float fireInterval = 1f;
         public int maxAmmo = 4;
+
+        [SerializeField] private Plane ownerPlane;
 
         private float _cooldown;
         private int _currentAmmo;
 
         private void Awake()
         {
+            if (ownerPlane == null)
+            {
+                ownerPlane = GetComponentInParent<Plane>();
+            }
             _currentAmmo = maxAmmo;
         }
 
         private void Update()
         {
             if (_cooldown > 0f)
+            {
                 _cooldown -= Time.deltaTime;
+                if (_cooldown < 0f) _cooldown = 0f;
+            }
         }
 
         public void FireAt(Transform target)
@@ -43,6 +52,7 @@ namespace MFlight.Demo
             );
 
             missile.SetTarget(target);
+            missile.SetOwner(ownerPlane);
         }
 
         public void ReloadAll()
