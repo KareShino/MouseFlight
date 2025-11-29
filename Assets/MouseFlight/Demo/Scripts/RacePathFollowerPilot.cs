@@ -18,6 +18,27 @@ namespace MFlight.Demo
         [Tooltip("この AI 機体のステータス（難易度などを含む）")]
         public RacePathFollowerPilotSettings settings;
 
+        // ★ 追加: ミサイル関連
+        [Header("Missile / Lock-On")]
+        [SerializeField]
+        private PlaneMissileLauncher missileLauncher;
+
+        [Tooltip("ロックオンできる最大距離")]
+        [SerializeField]
+        private float lockOnRange = 600f;
+
+        [Tooltip("機首から何度以内ならロックオン対象とみなすか")]
+        [SerializeField]
+        private float lockOnAngleDeg = 25f;
+
+        [Tooltip("ロックオン対象として探す Plane のタグ（空なら全 Plane 対象）")]
+        [SerializeField]
+        private string targetPlaneTag = ""; // 例: "Player"
+
+        [Tooltip("ターゲット候補検索の更新間隔（秒）")]
+        [SerializeField]
+        private float lockOnUpdateInterval = 0.2f;
+
         // 内部状態
         private int _lastClosestIndex = 0;
         private bool _hasLastClosest = false;
@@ -26,6 +47,10 @@ namespace MFlight.Demo
         private float _yaw;
         private float _roll;
         private float _throttleInput;
+
+        // ★ ロックオン状態
+        private Transform _lockOnTarget;
+        private float _lockOnUpdateTimer;
 
         public override float Pitch => _pitch;
         public override float Yaw => _yaw;
@@ -41,8 +66,16 @@ namespace MFlight.Demo
                 path.RebuildPath();
             }
 
+            // ★ ミサイルランチャー自動取得（Plane の子に付いている前提）
+            if (missileLauncher == null && plane != null)
+            {
+                missileLauncher = plane.GetComponentInChildren<PlaneMissileLauncher>();
+            }
+
             _hasLastClosest = false;
             _lastClosestIndex = 0;
+            _lockOnTarget = null;
+            _lockOnUpdateTimer = 0f;
             ZeroInput();
         }
 
@@ -119,7 +152,7 @@ namespace MFlight.Demo
             Vector3 toTargetLocal = plane.transform.InverseTransformDirection(toTargetWorld);
 
             float yawError = Mathf.Atan2(toTargetLocal.x, toTargetLocal.z);   // 左右
-            float pitchError = Mathf.Atan2(toTargetLocal.y, toTargetLocal.z);   // 上下
+            float pitchError = Mathf.Atan2(toTargetLocal.y, toTargetLocal.z); // 上下
 
             float deadRad = settings.deadZoneAngleDeg * Mathf.Deg2Rad;
             if (Mathf.Abs(yawError) < deadRad) yawError = 0f;
@@ -186,12 +219,110 @@ namespace MFlight.Demo
             {
                 _throttleInput = 0f;
             }
+
+            // ★ 最後にミサイル処理
+            HandleMissileFire();
         }
 
         private void ZeroInput()
         {
             _pitch = _yaw = _roll = _throttleInput = 0f;
         }
+
+        // ─────────────────────────────────────────
+        // ★ ロックオン対象の更新＆ミサイル発射
+        // ─────────────────────────────────────────
+
+        private void HandleMissileFire()
+        {
+            if (missileLauncher == null) return;
+
+            UpdateLockOnTarget();
+
+            if (_lockOnTarget == null) return;
+
+            // ランチャー側でクールダウンや弾数チェックしてくれるので
+            // ここは「撃てるなら撃て」の指示だけでOK
+            missileLauncher.FireAt(_lockOnTarget);
+        }
+
+        private void UpdateLockOnTarget()
+        {
+            if (plane == null) return;
+
+            // まず現在ロックオンしているターゲットが有効か確認
+            if (_lockOnTarget != null)
+            {
+                Vector3 toTarget = _lockOnTarget.position - plane.transform.position;
+                float sqrDist = toTarget.sqrMagnitude;
+
+                if (sqrDist > lockOnRange * lockOnRange)
+                {
+                    _lockOnTarget = null;
+                }
+                else
+                {
+                    float angle = Vector3.Angle(plane.transform.forward, toTarget);
+                    if (angle > lockOnAngleDeg)
+                    {
+                        _lockOnTarget = null;
+                    }
+                }
+            }
+
+            // まだロックオン維持できていたら新規サーチ不要
+            if (_lockOnTarget != null) return;
+
+            // 更新間隔制御（毎フレーム FindObjectsOfType すると重いので）
+            _lockOnUpdateTimer -= Time.deltaTime;
+            if (_lockOnUpdateTimer > 0f) return;
+            _lockOnUpdateTimer = lockOnUpdateInterval;
+
+            Plane[] allPlanes = GameObject.FindObjectsOfType<Plane>();
+            Plane bestPlane = null;
+            float bestScore = float.MaxValue;
+
+            Vector3 selfPos = plane.transform.position;
+            Vector3 selfForward = plane.transform.forward;
+
+            foreach (var p in allPlanes)
+            {
+                if (p == null) continue;
+                if (p == plane) continue;           // 自分は除外
+                if (p.isCrashed) continue;          // 墜落中は除外（必要なら）
+
+                if (!string.IsNullOrEmpty(targetPlaneTag) &&
+                    !p.CompareTag(targetPlaneTag))
+                {
+                    continue;
+                }
+
+                Vector3 to = p.transform.position - selfPos;
+                float sqrDist = to.sqrMagnitude;
+                if (sqrDist > lockOnRange * lockOnRange) continue;
+
+                float angle = Vector3.Angle(selfForward, to);
+                if (angle > lockOnAngleDeg) continue;
+
+                // スコア = 角度優先 + 距離少し
+                float score = angle * 0.7f + Mathf.Sqrt(sqrDist) * 0.3f;
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestPlane = p;
+                }
+            }
+
+            if (bestPlane != null)
+            {
+                _lockOnTarget = bestPlane.transform;
+            }
+        }
+
+        // ─────────────────────────────────────────
+        // ここから下は元のウェイポイント系メソッド
+        // ─────────────────────────────────────────
 
         private int FindClosestWaypointIndexGlobal(Vector3 pos, IReadOnlyList<RacePath.Waypoint> wps)
         {
