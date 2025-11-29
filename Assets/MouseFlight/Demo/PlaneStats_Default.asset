@@ -13,9 +13,9 @@ MonoBehaviour:
   m_Name: PlaneStats_Default
   m_EditorClassIdentifier: 
   thrust: 400
-  turnTorque: {x: 90, y: 25, z: 45}
+  turnTorque: {x: 200, y: 80, z: 100}
   forceMult: 100
-  drag: 0.01
+  drag: 0.3
   throttleSpeed: 0.5
   minThrottle: 0.5
   initialThrottle: 0.8

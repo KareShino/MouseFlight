@@ -13,6 +13,8 @@ namespace MFlight.Demo
 
         [SerializeField] private PlaneSkillController skillController;
         [SerializeField] private PlaneSkill equippedSkill;
+        [SerializeField] private PlaneMissileLauncher missileLauncher;
+        [SerializeField] private LockOnSystem lockOnSystem;
 
         [Header("Input Actions")]
         public InputActionReference pitchAction;
@@ -20,6 +22,9 @@ namespace MFlight.Demo
         public InputActionReference rollAction;
         public InputActionReference throttleAction;
         public InputActionReference skillAction;
+
+        [Header("Weapon Input")]
+        public InputActionReference missileAction;
 
         private float _pitch;
         private float _yaw;
@@ -38,6 +43,7 @@ namespace MFlight.Demo
             if (rollAction != null) rollAction.action.Enable();
             if (throttleAction != null) throttleAction.action.Enable();
             if (skillAction != null) skillAction.action.Enable();
+            if (missileAction != null) missileAction.action.Enable();
         }
 
         private void OnDisable()
@@ -46,6 +52,7 @@ namespace MFlight.Demo
             if (yawAction != null) yawAction.action.Disable();
             if (rollAction != null) rollAction.action.Disable();
             if (throttleAction != null) throttleAction.action.Disable();
+            if (missileAction != null) missileAction.action.Disable();
         }
 
         public override void TickPilot()
@@ -71,6 +78,15 @@ namespace MFlight.Demo
             if (skillAction.action.triggered)
             {
                 skillController.UseSkill(equippedSkill);
+            }
+
+            // Åö É~ÉTÉCÉãî≠éÀ
+            if (missileAction != null && missileAction.action.triggered)
+            {
+                if (missileLauncher != null && lockOnSystem != null && lockOnSystem.CurrentTarget != null)
+                {
+                    missileLauncher.FireAt(lockOnSystem.CurrentTarget.transform);
+                }
             }
         }
     }

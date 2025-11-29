@@ -17,6 +17,10 @@ namespace MFlight.Demo
         [SerializeField] private RectTransform boresight = null;
         [SerializeField] private RectTransform mousePos = null;
 
+        [Header("Lock-On HUD")]
+        [SerializeField] private LockOnSystem lockOnSystem;
+        [SerializeField] private RectTransform lockOnReticle;
+
         // ★ 高度・速度表示用
         [Header("Flight Info")]
         [SerializeField] private TextMeshProUGUI altitudeText = null;
@@ -63,6 +67,28 @@ namespace MFlight.Demo
             {
                 mousePos.position = playerCam.WorldToScreenPoint(controller.MouseAimPos);
                 mousePos.gameObject.SetActive(mousePos.position.z > 1f);
+            }
+
+            // ★ ロックオンHUD
+            if (lockOnReticle != null)
+            {
+                if (lockOnSystem != null && lockOnSystem.CurrentTarget != null)
+                {
+                    var targetTransform = lockOnSystem.CurrentTarget.transform;
+                    Vector3 screenPos = playerCam.WorldToScreenPoint(targetTransform.position);
+
+                    bool visible = screenPos.z > 0f;
+                    lockOnReticle.gameObject.SetActive(visible);
+
+                    if (visible)
+                    {
+                        lockOnReticle.position = screenPos;
+                    }
+                }
+                else
+                {
+                    lockOnReticle.gameObject.SetActive(false);
+                }
             }
 
             // ★ 高度・速度テキスト更新
